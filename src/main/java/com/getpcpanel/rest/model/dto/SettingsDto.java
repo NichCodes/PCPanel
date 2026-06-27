@@ -18,7 +18,6 @@ import lombok.NoArgsConstructor;
 public class SettingsDto {
     // General
     private boolean mainUIIcons;
-    private boolean openBrowserOnStartup;
     private boolean startupVersionCheck;
     private boolean forceVolume;
     private Long dblClickInterval;
@@ -76,7 +75,6 @@ public class SettingsDto {
     public static SettingsDto from(Save save) {
         var dto = new SettingsDto();
         dto.mainUIIcons = save.isMainUIIcons();
-        dto.openBrowserOnStartup = save.isOpenBrowserOnStartup();
         dto.startupVersionCheck = save.isStartupVersionCheck();
         dto.forceVolume = save.isForceVolume();
         dto.dblClickInterval = save.getDblClickInterval();
@@ -125,7 +123,6 @@ public class SettingsDto {
 
     public void applyTo(Save save) {
         save.setMainUIIcons(mainUIIcons);
-        save.setOpenBrowserOnStartup(openBrowserOnStartup);
         save.setStartupVersionCheck(startupVersionCheck);
         save.setForceVolume(forceVolume);
         save.setDblClickInterval(dblClickInterval);

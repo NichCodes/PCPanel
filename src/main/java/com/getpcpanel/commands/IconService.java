@@ -91,26 +91,26 @@ public class IconService {
         DEVICE = loadImage("/assets/device.png");
         SYSTEM_SOUND = loadImage("/assets/systemsounds.ico");
 
-        imageHandlers.put(Command.class, (a, b) -> DEFAULT);
+        imageHandlers.register(Command.class, (a, b) -> DEFAULT);
 
         // Dials
-        imageHandlers.put(CommandVolumeProcess.class, IconService::getRunningProcessIcon);
-        imageHandlers.put(CommandVolumeFocus.class, IconService::getFocusProcessIcon);
-        imageHandlers.put(CommandObs.class, IconService::getObsIcon);
-        imageHandlers.put(CommandVoiceMeeter.class, IconService::getVoiceMeeterIcon);
-        imageHandlers.put(CommandVolumeDevice.class, IconService::getDeviceIcon);
-        imageHandlers.put(CommandBrightness.class, IconService::getBrightnessIcon);
+        imageHandlers.register(CommandVolumeProcess.class, IconService::getRunningProcessIcon);
+        imageHandlers.register(CommandVolumeFocus.class, IconService::getFocusProcessIcon);
+        imageHandlers.register(CommandObs.class, IconService::getObsIcon);
+        imageHandlers.register(CommandVoiceMeeter.class, IconService::getVoiceMeeterIcon);
+        imageHandlers.register(CommandVolumeDevice.class, IconService::getDeviceIcon);
+        imageHandlers.register(CommandBrightness.class, IconService::getBrightnessIcon);
 
         // Buttons
-        imageHandlers.put(CommandVolumeDefaultDeviceAdvanced.class, IconService::getDeviceIcon);
-        imageHandlers.put(CommandVolumeDefaultDeviceToggleAdvanced.class, IconService::getDeviceIcon);
-        imageHandlers.put(CommandVolumeDefaultDevice.class, IconService::getDeviceIcon);
-        imageHandlers.put(CommandVolumeDefaultDeviceToggle.class, IconService::getDeviceIcon);
+        imageHandlers.register(CommandVolumeDefaultDeviceAdvanced.class, IconService::getDeviceIcon);
+        imageHandlers.register(CommandVolumeDefaultDeviceToggleAdvanced.class, IconService::getDeviceIcon);
+        imageHandlers.register(CommandVolumeDefaultDevice.class, IconService::getDeviceIcon);
+        imageHandlers.register(CommandVolumeDefaultDeviceToggle.class, IconService::getDeviceIcon);
 
         // Other handlers
         iconHandlers.forEach(ih -> {
             IIconHandler untyped = ih;
-            imageHandlers.put(ih.getCommandClass(), (is, cmd) -> (BufferedImage) untyped.supplyImage(cmd).orElse(null));
+            imageHandlers.register(ih.getCommandClass(), (is, cmd) -> (BufferedImage) untyped.supplyImage(cmd).orElse(null));
         });
     }
 
@@ -198,8 +198,9 @@ public class IconService {
 
     private class SafeMap extends HashMap<Class<? extends Command>, BiFunction<IconService, ? extends Command, BufferedImage>> {
 
-        public <T extends Command> void put(Class<T> key, BiFunction<IconService, T, BufferedImage> value) {
-            super.put(key, value);
+        @SuppressWarnings("unchecked")
+        public <T extends Command> void register(Class<T> key, BiFunction<IconService, T, BufferedImage> value) {
+            super.put(key, (BiFunction<IconService, ? extends Command, BufferedImage>) value);
         }
 
         public <T extends Command> BufferedImage handle(T icon) {

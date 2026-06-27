@@ -3,8 +3,10 @@ package com.getpcpanel.profile.dto;
 import javax.annotation.Nullable;
 
 import lombok.Data;
+import lombok.experimental.Accessors;
 
 @Data
+@Accessors(chain = true)
 public class SingleKnobLightingConfig {
     private SINGLE_KNOB_MODE mode;
     private String color1;

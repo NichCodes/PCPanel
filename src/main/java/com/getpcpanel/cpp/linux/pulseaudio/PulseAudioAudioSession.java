@@ -10,8 +10,10 @@ import com.getpcpanel.cpp.AudioSession;
 
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
+import lombok.experimental.Accessors;
 
 @Getter
+@Accessors(fluent = true)
 @EqualsAndHashCode(callSuper = true)
 public class PulseAudioAudioSession extends AudioSession {
     private final int index;

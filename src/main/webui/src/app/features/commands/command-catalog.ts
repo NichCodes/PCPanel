@@ -40,7 +40,14 @@ export interface CommandDef {
   icon: IconName;
   buildEmpty: () => Record<string, any>;
   fields: FieldDef[];
+  /** Non-functional on macOS — disabled there with an explanatory tooltip (see MAC_UNSUPPORTED_REASON). */
+  macUnsupported?: boolean;
 }
+
+/** Why per-app / focused-app audio actions are disabled on macOS (CoreAudio has no per-process volume). */
+export const MAC_UNSUPPORTED_REASON =
+  'Not available on macOS — per-app and focused-app volume/mute need per-process audio control, '
+  + "which macOS (CoreAudio) doesn't provide without a virtual audio driver.";
 
 const P = 'com.getpcpanel.commands.command.';
 const WL = 'com.getpcpanel.wavelink.command.';
@@ -54,7 +61,7 @@ const dialParams = () => ({ invert: false, moveStart: 0, moveEnd: 0 });
 export const COMMANDS: CommandDef[] = [
   // ── AUDIO ────────────────────────────────────────────────────────────────
   {
-    type: P + 'CommandVolumeProcess', label: 'App volume', category: 'audio', kinds: ['dial'], icon: 'volume',
+    type: P + 'CommandVolumeProcess', label: 'App volume', category: 'audio', kinds: ['dial'], icon: 'volume', macUnsupported: true,
     buildEmpty: () => ({ _type: P + 'CommandVolumeProcess', device: '', processName: [], unMuteOnVolumeChange: false, dialParams: dialParams(), invert: false }),
     fields: [
       { kind: 'apps', key: 'processName', label: 'Applications' },
@@ -62,7 +69,7 @@ export const COMMANDS: CommandDef[] = [
     ],
   },
   {
-    type: P + 'CommandVolumeProcessMute', label: 'App mute', category: 'audio', kinds: ['button'], icon: 'volume-x',
+    type: P + 'CommandVolumeProcessMute', label: 'App mute', category: 'audio', kinds: ['button'], icon: 'volume-x', macUnsupported: true,
     buildEmpty: () => ({ _type: P + 'CommandVolumeProcessMute', muteType: 'toggle', processName: [], overlayText: '' }),
     fields: [
       { kind: 'apps', key: 'processName', label: 'Applications' },
@@ -70,12 +77,12 @@ export const COMMANDS: CommandDef[] = [
     ],
   },
   {
-    type: P + 'CommandVolumeFocus', label: 'Focused-app volume', category: 'audio', kinds: ['dial'], icon: 'volume',
+    type: P + 'CommandVolumeFocus', label: 'Focused-app volume', category: 'audio', kinds: ['dial'], icon: 'volume', macUnsupported: true,
     buildEmpty: () => ({ _type: P + 'CommandVolumeFocus', dialParams: dialParams(), invert: false }),
     fields: [],
   },
   {
-    type: P + 'CommandVolumeFocusMute', label: 'Focused-app mute', category: 'audio', kinds: ['button'], icon: 'volume-x',
+    type: P + 'CommandVolumeFocusMute', label: 'Focused-app mute', category: 'audio', kinds: ['button'], icon: 'volume-x', macUnsupported: true,
     buildEmpty: () => ({ _type: P + 'CommandVolumeFocusMute', muteType: 'toggle', overlayText: '' }),
     fields: [{ kind: 'mute', key: 'muteType', label: 'Action' }],
   },

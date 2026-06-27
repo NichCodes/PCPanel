@@ -16,10 +16,8 @@ import io.quarkus.runtime.Quarkus;
 import lombok.extern.log4j.Log4j2;
 
 /**
- * Application lifecycle control exposed to the web UI. PCPanel runs headless (a tray app on
- * Windows/Linux, nothing visible on macOS), so the browser UI is the one place every platform can
- * quit it from without resorting to a terminal — see #104 (macOS has no tray) and #100 (the Linux
- * tray had no Quit entry).
+ * Application lifecycle control exposed to the web UI. The UI (the Tauri desktop window) is the one
+ * place every platform can quit the otherwise-headless backend from without resorting to a terminal.
  */
 @Log4j2
 @Path("/api/system")
@@ -27,6 +25,11 @@ import lombok.extern.log4j.Log4j2;
 @Produces(MediaType.APPLICATION_JSON)
 public class SystemResource {
     @Inject StartupOnboarding onboarding;
+
+    /** Flipped by {@link #quit()} and observed by the Tauri shell via {@link #quitting()} so it can tear
+     *  its window/Dock/tray down even when the backend's own exit is delayed or (in dev) never stops the
+     *  HTTP server. Single instance ({@code @ApplicationScoped}), so a plain volatile field is enough. */
+    private volatile boolean quitting;
 
     /**
      * One-time onboarding hint for the UI (which welcome/update dialog to show, the version, and the
@@ -47,16 +50,29 @@ public class SystemResource {
     }
 
     /**
-     * Shuts the application down. Uses {@link Quarkus#asyncExit()} so this request can return its
-     * response before the JVM stops; the normal Quarkus shutdown sequence then runs (ShutdownEvent →
-     * device handlers close, tray icon is removed, AppShutdownState flips), exactly as a tray "Exit"
+     * Shuts the application down. Sets the {@link #quitting} flag (so the desktop shell can react
+     * immediately) and uses {@link Quarkus#asyncExit()} so this request can return its response before
+     * the JVM stops; the normal Quarkus shutdown sequence then runs (ShutdownEvent → device handlers
+     * close, tray icon is removed, AppShutdownState flips, pending saves flush), exactly as a tray "Exit"
      * would. The UI shows a "stopped" state afterwards since the server is then gone.
      */
     @POST
     @Path("/quit")
     public Response quit() {
         log.info("Quit requested from the web UI; shutting down");
+        quitting = true;
         Quarkus.asyncExit(0);
         return Response.accepted().build();
+    }
+
+    /**
+     * Whether a shutdown has been requested. The Tauri desktop shell polls this so it can close its
+     * window and exit even when it is not the process that spawned the backend (dev mode) — there it
+     * has no child process to watch. Serialised as a bare JSON boolean.
+     */
+    @GET
+    @Path("/quitting")
+    public boolean quitting() {
+        return quitting;
     }
 }

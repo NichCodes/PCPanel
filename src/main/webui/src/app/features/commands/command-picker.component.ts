@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
 import { OverlayModule } from '@angular/cdk/overlay';
 import { A11yModule } from '@angular/cdk/a11y';
-import { CommandCategory, CommandDef, CommandKind, COMMANDS, categoryLabel, Integration } from './command-catalog';
+import { CommandCategory, CommandDef, CommandKind, COMMANDS, categoryLabel, Integration, MAC_UNSUPPORTED_REASON } from './command-catalog';
 import { IntegrationDataService } from './integration-data.service';
 import { PlatformService } from '../../services/platform.service';
 import { IconComponent, StatusDotComponent } from '../../ui';
@@ -41,8 +41,13 @@ interface PickerGroup { label: string; status?: Status; statusText?: string; off
             @if (g.statusText) { <span class="grp-status">{{ g.statusText }}</span> }
           </div>
           @for (def of g.rows; track def.type) {
-            <button class="row" [class.offline]="g.offline || g.unsupported" [disabled]="g.unsupported" (click)="choose(def)">
+            <button class="row" [class.offline]="g.offline || g.unsupported || macBlocked(def)"
+                    [disabled]="g.unsupported"
+                    [attr.aria-disabled]="macBlocked(def) || null"
+                    [title]="macBlocked(def) ? MAC_UNSUPPORTED_REASON : null"
+                    (click)="choose(def)">
               <span>{{ def.label }}</span>
+              @if (macBlocked(def)) { <pc-icon class="row-info" name="alert-triangle" [size]="13"></pc-icon> }
             </button>
           }
         }
@@ -70,6 +75,10 @@ interface PickerGroup { label: string; status?: Status; statusText?: string; off
     .row.offline { color: var(--text-3); }
     .row:disabled { cursor: not-allowed; }
     .row:disabled:hover { background: transparent; color: var(--text-3); }
+    /* macOS-unsupported rows: kept hoverable (so the title tooltip shows) but not selectable. */
+    .row[aria-disabled="true"] { cursor: not-allowed; }
+    .row[aria-disabled="true"]:hover { background: transparent; color: var(--text-3); }
+    .row-info { margin-left: auto; flex-shrink: 0; color: var(--text-3); }
   `],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -83,6 +92,9 @@ export class CommandPickerComponent {
   /** 'primary' = the prominent full-width CTA (control page); 'subtle' = a small dashed button (band editor). */
   readonly variant = input<'primary' | 'subtle'>('primary');
   readonly pick = output<CommandDef>();
+
+  /** Exposed for the template's tooltip on disabled macOS rows. */
+  readonly MAC_UNSUPPORTED_REASON = MAC_UNSUPPORTED_REASON;
 
   readonly query = signal('');
   readonly open = signal(false);
@@ -123,7 +135,13 @@ export class CommandPickerComponent {
     return groups;
   });
 
+  /** A per-app / focused-app audio command on macOS, where CoreAudio can't do per-process volume. */
+  macBlocked(def: CommandDef): boolean {
+    return !!def.macUnsupported && this.platform.os() === 'mac';
+  }
+
   choose(def: CommandDef): void {
+    if (this.macBlocked(def)) return;
     this.pick.emit(def);
     this.open.set(false);
     this.query.set('');

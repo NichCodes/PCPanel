@@ -9,9 +9,11 @@ import jakarta.enterprise.event.Event;
 import lombok.AccessLevel;
 import lombok.Data;
 import lombok.Setter;
+import lombok.experimental.Accessors;
 import lombok.extern.log4j.Log4j2;
 
 @Data
+@Accessors(fluent = true)
 @Log4j2
 @Setter(AccessLevel.PROTECTED)
 @SuppressWarnings("unused") // Methods called from JNI

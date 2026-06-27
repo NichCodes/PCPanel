@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PCPanel</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #15171c;
+        color: #e6e8ec;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+      }
+      .spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid rgba(255, 255, 255, 0.15);
+        border-top-color: #0094c5;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      .label { font-size: 14px; color: #9aa0aa; letter-spacing: 0.02em; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="spinner"></div>
+      <div class="label">Starting PCPanel…</div>
+    </div>
+  </body>
+</html>

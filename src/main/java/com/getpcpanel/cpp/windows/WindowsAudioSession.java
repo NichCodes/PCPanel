@@ -14,8 +14,10 @@ import com.getpcpanel.cpp.AudioSession;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
+import lombok.experimental.Accessors;
 
 @Getter
+@Accessors(fluent = true)
 @EqualsAndHashCode(callSuper = true)
 public class WindowsAudioSession extends AudioSession {
     @JsonIgnore @ToString.Exclude private final AudioDevice device;

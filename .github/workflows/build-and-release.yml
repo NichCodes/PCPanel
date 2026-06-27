@@ -1,20 +1,16 @@
-# Build the Quarkus native image for Windows and Linux, wrap it in proper installers,
-# and publish a pre-release.
+# Build the Quarkus native-image backend per OS, wrap it in the Tauri desktop shell, and publish a
+# pre-release.
 #
-# Why installers instead of the bare executable: the GraalVM native image is NOT a
-# single self-contained file. native-image emits the executable PLUS a set of companion
-# shared libraries (awt/fontmanager/lcms/jvm/... as *.dll on Windows, *.so on Linux) that
-# the binary loads from its own directory at runtime via java.library.path. Shipping just
-# the *-runner(.exe) — as the previous workflow did — produces a binary that crashes on
-# first AWT/tray use. Every artifact below bundles the executable together with its libs.
+# Each OS job: build + smoke-test the GraalVM native-image backend (the same binary the shell spawns),
+# stage it as the Tauri app's bundled `backend/` resource (the native image is NOT self-contained — it
+# loads companion *.dll/*.so/*.dylib from its own directory), then run `tauri build` to produce the
+# platform installer. The shell opens the native window + tray and spawns the backend as a child.
 #
-#   Windows : per-user Inno Setup installer (no admin, installs under %LOCALAPPDATA%,
-#             optional autostart on sign-in, launches after install)
-#   Linux   : .deb (standard) + AppImage + best-effort Flatpak bundle
-#   macOS   : best-effort .app bundled into an architecture-specific .dmg, ad-hoc signed
-#             (valid signature, but not notarized — no Apple Developer ID). The macOS build
-#             is experimental and runs continue-on-error so it never blocks the Windows/Linux
-#             release if a runner image changes.
+#   Windows : Tauri NSIS installer (per-user, no admin; replaces the old Inno Setup .exe)
+#   Linux   : Tauri .deb (installs the udev rule) + AppImage + best-effort Flatpak bundle
+#   macOS   : best-effort Tauri .app in an architecture-specific .dmg, ad-hoc signed (valid signature,
+#             not notarized — no Apple Developer ID). The macOS leg runs continue-on-error so it never
+#             blocks the Windows/Linux release if a runner image changes.
 
 name: Build & Release
 env:
@@ -190,23 +186,34 @@ jobs:
             throw "Assembled PCPanel.exe quit check failed: $quitFail"
           }
 
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+      # --- Wrap the validated backend in the Tauri desktop shell -----------------------------------
+      # The smoke-tested target/windows-dist (PCPanel.exe + patched companion DLLs) becomes the Tauri
+      # app's bundled `backend/` resource; the shell spawns it and owns the window/tray. The NSIS
+      # installer Tauri emits replaces the old Inno Setup one (still per-user, no admin).
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Build installer
+      - name: Stage backend into the Tauri shell
         shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-            "/DMyAppVersion=${{ steps.ver.outputs.version }}" `
-            "/DSourceDir=$(Resolve-Path target/windows-dist)" `
-            "/DOutputDir=$(Resolve-Path target)" `
-            packaging/windows/pcpanel.iss
+          $dest = "src-tauri/backend"
+          Get-ChildItem $dest -Exclude '.gitkeep','README.md' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Copy-Item target/windows-dist/* $dest/ -Recurse -Force
+          '{ "version": "${{ steps.ver.outputs.version }}" }' | Set-Content src-tauri/version-override.json
+
+      - name: Build Tauri installer (NSIS)
+        shell: pwsh
+        # npx fetches the prebuilt Tauri CLI (no cargo compile of the CLI); -c merges the version.
+        run: |
+          Push-Location src-tauri
+          npx --yes '@tauri-apps/cli@^2' build -c version-override.json
+          Pop-Location
 
       - name: Store artifact
         uses: actions/upload-artifact@v7
         with:
           name: windows-installer
-          path: ./target/PCPanel-*-setup.exe
+          path: ./src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
 
   buildLinux:
@@ -281,53 +288,76 @@ jobs:
           path: ~/.cache/pcpanel-kdotool
           key: kdotool-${{ hashFiles('packaging/linux/fetch-kdotool.sh') }}
 
-      - name: Build .deb
-        run: |
-          exe=$(ls target/*-runner | head -1)
-          bash packaging/linux/build-deb.sh "${{ steps.ver.outputs.version }}" "$exe" target
+      # --- Wrap the validated backend in the Tauri desktop shell -----------------------------------
+      # The smoke-tested native runner + its companion .so libs + kdotool become the Tauri app's
+      # bundled `backend/` resource; Tauri then emits the .deb and AppImage (replacing the hand-written
+      # build-deb.sh / build-appimage.sh). The .deb installs the udev rule via bundle.linux.deb.files.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Build AppImage
+      - name: Install Tauri Linux build deps
         run: |
-          # Recommended download for immutable distros: single sandbox-free file.
-          curl -fsSL --retry 3 -o appimagetool \
-            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool
-          export APPIMAGETOOL="$PWD/appimagetool"
-          export APPIMAGE_EXTRACT_AND_RUN=1   # CI runners have no FUSE
-          export ARCH=x86_64
-          exe=$(ls target/*-runner | head -1)
-          bash packaging/linux/appimage/build-appimage.sh "${{ steps.ver.outputs.version }}" "$exe" target
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Stage backend into the Tauri shell
+        run: |
+          set -euxo pipefail
+          dest=src-tauri/backend
+          find "$dest" -mindepth 1 ! -name '.gitkeep' ! -name 'README.md' -exec rm -rf {} +
+          cp "$(ls target/*-runner | head -1)" "$dest/PCPanel"
+          chmod +x "$dest/PCPanel"
+          cp target/*.so "$dest/" 2>/dev/null || true
+          # kdotool (Apache-2.0): the focused-window helper, kept beside the backend binary so
+          # LinuxProcessHelper finds it as a sibling (see CLAUDE.md). Cached above per pin.
+          bash packaging/linux/fetch-kdotool.sh "$dest"
+          echo '{ "version": "${{ steps.ver.outputs.version }}" }' > src-tauri/version-override.json
+
+      - name: Build Tauri packages (.deb + AppImage)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'   # CI runners have no FUSE
+          NO_STRIP: 'true'
+        run: |
+          cd src-tauri
+          npx --yes '@tauri-apps/cli@^2' build -c version-override.json
 
       - name: Store .deb artifact
         uses: actions/upload-artifact@v7
         with:
           name: linux-deb
-          path: ./target/*.deb
+          path: ./src-tauri/target/release/bundle/deb/*.deb
           if-no-files-found: error
 
       - name: Store AppImage artifact
         uses: actions/upload-artifact@v7
         with:
           name: linux-appimage
-          path: ./target/*.AppImage
+          path: ./src-tauri/target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
-      # Hand the native binary + companion .so libraries to the buildFlatpak job, which runs inside
-      # the freedesktop SDK container. This is an inter-job hand-off, not a release asset — preRelease
+      # Collect the prebuilt Tauri shell binary under a stable name for the Flatpak hand-off.
+      - name: Collect Tauri shell binary
+        run: cp src-tauri/target/release/PCPanel target/pcpanel-shell
+
+      # Hand the backend binary + companion .so libraries AND the Tauri shell to the buildFlatpak job,
+      # which runs in its own container. This is an inter-job hand-off, not a release asset — preRelease
       # strips it before publishing.
-      - name: Upload native binary for the Flatpak job
+      - name: Upload native binaries for the Flatpak job
         uses: actions/upload-artifact@v7
         with:
           name: linux-native
           path: |
             target/*-runner
             target/*.so
+            target/pcpanel-shell
           if-no-files-found: error
 
-  # Flatpak runs in its own job inside bilelmoussaoui/flatpak-github-actions:freedesktop-24.08, which
-  # already ships the freedesktop Platform + SDK. That removes the ~16 min `flatpak install` download
-  # the old host-based step paid on every run (the module itself is buildsystem: simple — no compile).
-  # Best-effort: the flatpak-builder step is continue-on-error so a failure never blocks the release.
+  # Flatpak runs in its own job inside bilelmoussaoui/flatpak-github-actions:gnome-47, which ships the
+  # GNOME Platform + SDK 47 — needed because the Tauri webview links WebKitGTK, which the bare
+  # freedesktop runtime lacks (the GNOME runtime bundles it). The module is buildsystem: simple (it just
+  # installs the prebuilt shell + backend — no compile). Best-effort: the flatpak-builder step is
+  # continue-on-error so a failure never blocks the release.
   buildFlatpak:
     name: Linux Flatpak (best-effort)
     needs: buildLinux
@@ -336,7 +366,7 @@ jobs:
     # run or block the release. preRelease gates only on the required Windows/Linux jobs (see its `if`).
     continue-on-error: true
     container:
-      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      image: bilelmoussaoui/flatpak-github-actions:gnome-47
       options: --privileged
     steps:
       - uses: actions/checkout@v6
@@ -374,12 +404,16 @@ jobs:
           cp packaging/linux/com.getpcpanel.PCPanel.desktop "$build/"
           cp packaging/linux/com.getpcpanel.PCPanel.metainfo.xml "$build/"
           cp app-icon.png "$build/"
+          # Prebuilt Tauri shell binary — the Flatpak entry point.
+          cp native/pcpanel-shell "$build/pcpanel-shell"
+          chmod +x "$build/pcpanel-shell"
           # kdotool binary + Apache-2.0 license bundled inside the sandbox (see manifest).
           bash packaging/linux/fetch-kdotool.sh "$build"
-          # Native executable + companion .so libraries as a flat tarball.
+          # Backend executable + companion .so libraries under backend/ (the shell spawns it from there).
           stage=$(mktemp -d)
-          cp "$(ls native/*-runner | head -1)" "$stage/PCPanel"
-          cp native/*.so "$stage/" 2>/dev/null || true
+          mkdir -p "$stage/backend"
+          cp "$(ls native/*-runner | head -1)" "$stage/backend/PCPanel"
+          cp native/*.so "$stage/backend/" 2>/dev/null || true
           tar -czf "$build/pcpanel-native.tar.gz" -C "$stage" .
 
       - name: Build Flatpak bundle
@@ -457,113 +491,69 @@ jobs:
         # instead of the bare ${project.version} (2.0-SNAPSHOT).
         run: mvn -B package -Pnative -Dquarkus.application.version=${{ steps.ver.outputs.version }} --file pom.xml
 
-      - name: Assemble .app bundle
-        id: assemble
-        # Tolerated like the rest of the macOS leg: if the native build above failed there is no
-        # runner binary to wrap, so this step fails and the sign/verify/dmg steps below are skipped,
-        # the job stays green, and the Windows/Linux release is never blocked. A *signing* regression,
-        # by contrast, fails the dedicated (non-continue-on-error) step below and turns the job red.
-        continue-on-error: true
+      - name: Smoke-test the native binary (boots and serves)
+        # Gate on the bare runner BEFORE Tauri wraps it — the shell spawns this exact binary, so it must
+        # boot and serve. Same shared check as Linux/the old job (boots, Quarkus binds, REST round-trips
+        # through JSON → guards the native-image serialization footguns in CLAUDE.md). On macOS audio +
+        # HID fully work, so /api/audio/* are required. NOT continue-on-error: a runtime regression turns
+        # the job red (preRelease still gates only on Windows/Linux, so it never blocks the release).
+        if: steps.build.outcome == 'success'
         run: |
           set -euxo pipefail
-          exe=$(ls target/*-runner | head -1)
-          app="target/PCPanel.app"
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp "$exe" "$app/Contents/MacOS/PCPanel"
-          chmod +x "$app/Contents/MacOS/PCPanel"
-          # native-image drops the companion .dylib files next to the runner; keep them beside the binary.
-          cp target/*.dylib "$app/Contents/MacOS/" 2>/dev/null || true
-          cp app-icon.icns "$app/Contents/Resources/PCPanel.icns" 2>/dev/null || true
-          cat > "$app/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key><string>PCPanel</string>
-            <key>CFBundleDisplayName</key><string>PCPanel</string>
-            <key>CFBundleIdentifier</key><string>com.getpcpanel.PCPanel</string>
-            <key>CFBundleVersion</key><string>${{ steps.ver.outputs.version }}</string>
-            <key>CFBundleShortVersionString</key><string>${{ steps.ver.outputs.version }}</string>
-            <key>CFBundleExecutable</key><string>PCPanel</string>
-            <key>CFBundleIconFile</key><string>PCPanel</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-
-      - name: Sign and smoke-test the .app bundle
-        # Runs only when assembly produced a bundle, so a tolerated native-build failure doesn't turn
-        # the job red. Intentionally NOT continue-on-error: if the assembled app can't be signed or
-        # won't actually run, this job MUST go red so the regression is caught. That failure still does
-        # not block the release — preRelease gates only on the Windows/Linux jobs (its `if` uses
-        # !cancelled()).
-        if: steps.assemble.outcome == 'success'
-        run: |
-          set -euxo pipefail
-          app="target/PCPanel.app"
-          bin="$app/Contents/MacOS/PCPanel"
-
-          # --- Sign (ad-hoc; the issue-#101 fix) -------------------------------------------------
-          # We have no Apple Developer ID, so this is an *ad-hoc* signature (`--sign -`): it does not
-          # pass notarization, but it produces a structurally VALID signature, which is what macOS
-          # actually requires to launch. On Apple Silicon the kernel refuses to run any Mach-O without
-          # at least an ad-hoc signature (unsigned arm64 code is SIGKILLed at exec). GraalVM's linker
-          # already ad-hoc-signs the runner binary, so it carries a bundle CodeDirectory that reserves
-          # a slot for a sealed-resources manifest — but nothing ever signed the *bundle*, so
-          # `Contents/_CodeSignature/CodeResources` was missing. That half-signed state is precisely
-          # the "code has no resources but signature indicates they must be present" / "PCPanel is
-          # damaged" failure (issue #101), and removing the quarantine xattr cannot fix it. Signing the
-          # bundle generates the CodeResources manifest and makes the quarantine workaround work again.
-          #
-          # All bundle mutation (binary, dylibs, icon, Info.plist) happened in the assemble step —
-          # touching any bundled file after signing would invalidate the seal. We sign inside-out
-          # (every nested Mach-O first, the bundle last); `--deep` signing is deprecated by Apple and
-          # is NOT used here. No entitlements are passed: the cs.* entitlements only take effect under
-          # the Hardened Runtime, which an ad-hoc signature does not enable, so they would be inert.
-          xattr -cr "$app"
-          find "$app/Contents" -type f \( -name '*.dylib' -o -name '*.jnilib' -o -name '*.so' \) \
-            -exec codesign --force --sign - --timestamp=none {} +
-          codesign --force --sign - --timestamp=none "$app"
-
-          # --- Smoke test: the app must actually START and DO WORK -------------------------------
-          # This is the primary gate (shared with the Linux job via packaging/smoke-test.sh): boot the
-          # bundled binary, wait for the embedded HTTP server, then exercise real REST endpoints.
-          # Reaching them with HTTP 200 proves the native image boots, Quarkus starts, the server binds,
-          # and backend state round-trips through JSON (so it also guards the native-image serialization
-          # footguns called out in CLAUDE.md — List<DTO> array reflection, FileSerializer). On macOS
-          # audio and HID fully work, so /api/audio/* are *required* here. Code signing is verified as a
-          # side effect: an invalidly signed bundle is SIGKILLed at exec, so the server never comes up
-          # and this fails — which is why this still catches a signing regression even without the
-          # `codesign --verify` bonus check below.
-          # /api/audio/selftest re-applies the default device's current volume/mute (a no-op) to drive
-          # the settable WRITE path (isSettable → ByteByReference), which the read endpoints miss — this
-          # is what reproduces #105 at runtime on macOS.
+          bin=$(ls target/*-runner | head -1)
           bash packaging/smoke-test.sh "$bin" --port 7654 \
             --require /api/devices --require /api/audio/devices --require /api/audio/applications \
             --require /api/audio/selftest \
             --require-hid --quit-check
 
-          # --- Bonus: explicit signature confirmation (a benefit, not the primary gate) ----------
-          codesign --verify --deep --strict --verbose=4 "$app"
-          codesign --display --verbose=4 "$app" || true
+      - name: Set up Rust
+        if: steps.build.outcome == 'success'
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Create .dmg
-        # An `if:` without a status function is ANDed with success(), so this is skipped automatically
-        # if the sign/verify step failed — we never package an unverified bundle. Gating on assembly
-        # also cleanly skips it when the native build was the thing that failed.
+      - name: Stage backend into the Tauri shell (ad-hoc sign nested Mach-O)
+        id: assemble
+        if: steps.build.outcome == 'success'
+        # The runner + companion .dylib files become the Tauri app's bundled backend/ resource. We
+        # ad-hoc sign every nested Mach-O here (inside-out), BEFORE Tauri seals the outer .app — else the
+        # bundle is half-signed and macOS reports it "damaged" (issue #101). No Developer ID, so this is
+        # ad-hoc (--sign -): a structurally valid signature, not notarized.
+        run: |
+          set -euxo pipefail
+          dest=src-tauri/backend
+          find "$dest" -mindepth 1 ! -name '.gitkeep' ! -name 'README.md' -exec rm -rf {} +
+          cp "$(ls target/*-runner | head -1)" "$dest/PCPanel"
+          chmod +x "$dest/PCPanel"
+          cp target/*.dylib "$dest/" 2>/dev/null || true
+          xattr -cr "$dest"
+          find "$dest" -type f \( -name '*.dylib' -o -name '*.jnilib' -o -name '*.so' \) \
+            -exec codesign --force --sign - --timestamp=none {} +
+          codesign --force --sign - --timestamp=none "$dest/PCPanel"
+          echo '{ "version": "${{ steps.ver.outputs.version }}" }' > src-tauri/version-override.json
+
+      - name: Build Tauri app (.app, ad-hoc signed)
+        if: steps.assemble.outcome == 'success'
+        # Tauri produces only the .app here (targets exclude dmg). APPLE_SIGNING_IDENTITY="-" makes it
+        # ad-hoc sign the .app (the issue-#101 fix); it seals over the already-signed nested backend
+        # Mach-O. Not notarized (no Developer ID). The .dmg is built below via hdiutil — create-dmg's
+        # AppleScript window styling is unreliable on CI.
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
+        run: |
+          set -euxo pipefail
+          cd src-tauri
+          npx --yes '@tauri-apps/cli@^2' build -c version-override.json
+
+      - name: Verify signature and create .dmg (hdiutil)
         if: steps.assemble.outcome == 'success'
         run: |
           set -euxo pipefail
           arch=$(uname -m)   # arm64 or x86_64
-          app="target/PCPanel.app"
+          app="src-tauri/target/release/bundle/macos/PCPanel.app"
+          codesign --verify --deep --strict --verbose=4 "$app"
+          codesign --display --verbose=4 "$app" || true
           dmg="target/PCPanel-${{ steps.ver.outputs.version }}-${arch}.dmg"
-          # NB: the host volume has plenty of free space — the earlier "hdiutil: create failed - No
-          # space left on device" was hdiutil AUTO-SIZING the temporary image from the source folder
-          # and coming up just short for the large (signed) runner binary, so the copy overflowed the
-          # image itself. Size it explicitly instead: build a writable image at bundle-size + headroom,
-          # then convert to the compressed read-only UDZO we ship.
+          # Size the image explicitly (bundle size + headroom) so hdiutil's auto-size can't come up short
+          # on the large signed binary; build writable then convert to the compressed read-only UDZO.
           appkb=$(du -sk "$app" | awk '{print $1}')
           sizemb=$(( appkb / 1024 + 300 ))
           hdiutil create -volname PCPanel -srcfolder "$app" -ov -format UDRW -size "${sizemb}m" target/PCPanel-rw.dmg
@@ -663,8 +653,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # linux-native (raw runner + .so) is the buildLinux -> buildFlatpak hand-off, not a release
-          # asset; drop it so only the installers/bundles are published.
-          rm -f dist/*-runner dist/*.so
+          # linux-native (raw runner + .so + Tauri shell) is the buildLinux -> buildFlatpak hand-off,
+          # not a release asset; drop it so only the installers/bundles are published.
+          rm -f dist/*-runner dist/*.so dist/pcpanel-shell
           gh release upload "$TAG_NAME" dist/*
           gh release edit "$TAG_NAME" --draft=false

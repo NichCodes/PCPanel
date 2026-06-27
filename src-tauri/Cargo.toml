@@ -1,0 +1,33 @@
+[package]
+name = "pcpanel"
+version = "0.1.0"
+description = "PCPanel desktop shell"
+authors = ["PCPanel community"]
+edition = "2021"
+rust-version = "1.77"
+
+# Desktop-only shell: a plain binary crate (no mobile lib target). The whole app lives in src/main.rs.
+# Binary is named "PCPanel" (not the lowercase crate name) so the macOS dock/menu shows "PCPanel" in
+# dev — an unbundled run takes its app name from the executable's process name. Packaged builds use
+# productName from tauri.conf.json regardless.
+[[bin]]
+name = "PCPanel"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# tray-icon: the system tray; image-png: load the PNG window/tray icon at runtime.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "2"
+# Tiny blocking HTTP client for talking to the local backend (health-check, quit).
+# default-features = false drops the TLS/gzip stack — everything is plain http://127.0.0.1.
+ureq = { version = "2", default-features = false }
+log = "0.4"
+
+[profile.release]
+# Smaller, faster-to-ship binary; the shell is thin so this is cheap.
+opt-level = "s"
+lto = true
+strip = true

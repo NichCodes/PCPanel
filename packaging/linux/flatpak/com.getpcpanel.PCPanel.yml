@@ -1,9 +1,17 @@
-# Flatpak manifest for PCPanel.
+# Flatpak manifest for PCPanel (Tauri desktop shell + prebuilt backend).
 #
-# This packages the *prebuilt* GraalVM native image (built earlier in CI) rather than
-# compiling inside flatpak-builder — native-image needs a full GraalVM toolchain that
-# does not belong in a Flatpak SDK build. CI assembles `pcpanel-native.tar.gz`
-# (PCPanel executable + companion *.so libraries) next to this manifest before building.
+# This packages PREBUILT binaries (both built earlier in CI) rather than compiling inside
+# flatpak-builder: the Tauri shell and the GraalVM native-image backend both need toolchains that do
+# not belong in a Flatpak SDK build. CI stages `pcpanel-native.tar.gz` (the backend `PCPanel` +
+# companion *.so under backend/) and the `pcpanel-shell` executable next to this manifest first.
+#
+# Architecture: the Tauri shell is the entry point. It opens the native window and spawns the backend
+# (which serves the UI on 127.0.0.1:7654) as a child, pointed at /app/pcpanel/backend via
+# PCPANEL_BACKEND_DIR (see pcpanel-launcher.sh). The shell owns the tray; the backend runs headless.
+#
+# Runtime: org.gnome.Platform ships WebKitGTK (libwebkit2gtk-4.1), which the Tauri webview needs and the
+# bare org.freedesktop.Platform does not. (NOTE: this leg is best-effort — a prebuilt Tauri binary built
+# on the CI host must resolve its libs against the GNOME runtime; validate on a real flatpak build.)
 #
 # Focused-window detection: kdotool (Apache-2.0) is bundled inside the sandbox and talks to the host
 # KWin over D-Bus (--talk-name=org.kde.KWin), so "focus volume" works on KDE Plasma (Wayland/X11)
@@ -18,9 +26,9 @@
 #   * Autostart on login is not configured here; enable it via your desktop's autostart
 #     settings or `flatpak run` from a user systemd unit.
 app-id: com.getpcpanel.PCPanel
-runtime: org.freedesktop.Platform
-runtime-version: '24.08'
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
 command: pcpanel
 
 finish-args:
@@ -35,11 +43,8 @@ finish-args:
   - --device=all
   # MQTT, OBS WebSocket, OSC, device discovery
   - --share=network
-  # System tray (StatusNotifierItem). The app registers a StatusNotifierItem by OWNING a unique bus
-  # name org.kde.StatusNotifierItem-<pid>-<id> and then calling RegisterStatusNotifierItem on the
-  # watcher. --talk-name alone is not enough: without --own-name the sandbox's xdg-dbus-proxy denies
-  # RequestName, so requestBusName fails with ServiceUnknown and NO tray icon ever appears in the
-  # Flatpak (#107). --own-name lets the app claim its SNI name; --talk-name reaches the watcher.
+  # System tray (StatusNotifierItem) — now registered by the Tauri shell (libayatana-appindicator),
+  # same SNI mechanism as before: --own-name lets it claim its bus name, --talk-name reaches the watcher.
   - --own-name=org.kde.StatusNotifierItem-*
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
@@ -59,11 +64,12 @@ modules:
   - name: pcpanel
     buildsystem: simple
     build-commands:
-      # Native executable + companion shared libraries.
-      - install -d /app/pcpanel
-      - install -m 0755 PCPanel /app/pcpanel/PCPanel
-      - install -d /app/bin
-      - 'for so in *.so *.so.*; do [ -e "$so" ] && install -m 0644 "$so" /app/pcpanel/ || true; done'
+      # Tauri desktop shell (prebuilt) — the entry point.
+      - install -d /app/pcpanel /app/pcpanel/backend /app/bin
+      - install -m 0755 pcpanel-shell /app/pcpanel/pcpanel-shell
+      # Backend native executable + companion shared libraries (under backend/).
+      - install -m 0755 backend/PCPanel /app/pcpanel/backend/PCPanel
+      - 'for so in backend/*.so backend/*.so.*; do [ -e "$so" ] && install -m 0644 "$so" /app/pcpanel/backend/ || true; done'
       # Launcher + host-tool shims (pactl/xdotool are forwarded to the host).
       - install -m 0755 pcpanel-launcher.sh /app/bin/pcpanel
       - install -m 0755 host-spawn-wrapper.sh /app/bin/pactl
@@ -78,9 +84,13 @@ modules:
       - install -Dm 0644 com.getpcpanel.PCPanel.metainfo.xml /app/share/metainfo/com.getpcpanel.PCPanel.metainfo.xml
       - install -Dm 0644 app-icon.png /app/share/icons/hicolor/256x256/apps/com.getpcpanel.PCPanel.png
     sources:
+      # Backend executable + companion .so libraries (staged under backend/ by CI).
       - type: archive
         path: pcpanel-native.tar.gz
         strip-components: 0
+      # Prebuilt Tauri shell binary.
+      - type: file
+        path: pcpanel-shell
       - type: file
         path: pcpanel-launcher.sh
       - type: file

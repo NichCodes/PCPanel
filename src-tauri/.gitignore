@@ -1,0 +1,11 @@
+# Rust / Tauri build output
+/target/
+/gen/
+
+# CI writes the build-numbered version here to merge into tauri.conf.json
+/version-override.json
+
+# The backend native-image dist is assembled into here at package time, never committed.
+/backend/*
+!/backend/.gitkeep
+!/backend/README.md

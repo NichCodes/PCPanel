@@ -1,8 +1,10 @@
 package com.getpcpanel.profile.dto;
 
 import lombok.Data;
+import lombok.experimental.Accessors;
 
 @Data
+@Accessors(chain = true)
 public class SingleSliderLabelLightingConfig {
     private SINGLE_SLIDER_LABEL_MODE mode;
 

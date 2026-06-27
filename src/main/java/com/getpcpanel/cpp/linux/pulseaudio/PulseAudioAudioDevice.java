@@ -6,8 +6,10 @@ import com.getpcpanel.cpp.AudioDevice;
 import com.getpcpanel.cpp.DataFlow;
 
 import lombok.Getter;
+import lombok.experimental.Accessors;
 
 @Getter
+@Accessors(fluent = true)
 public class PulseAudioAudioDevice extends AudioDevice {
     private final int index;
     private final boolean isDefault;

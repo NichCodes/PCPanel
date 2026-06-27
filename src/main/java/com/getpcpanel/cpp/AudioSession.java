@@ -13,9 +13,11 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.EqualsAndHashCode.Exclude;
 import lombok.ToString;
+import lombok.experimental.Accessors;
 import lombok.extern.log4j.Log4j2;
 
 @Data
+@Accessors(fluent = true)
 @Log4j2
 @SuppressWarnings("unused") // Methods called from JNI
 public class AudioSession {

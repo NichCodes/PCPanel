@@ -8,8 +8,10 @@ import com.getpcpanel.cpp.osx.CoreAudioWrapper.CoreAudioDevice;
 
 import jakarta.enterprise.event.Event;
 import lombok.Getter;
+import lombok.experimental.Accessors;
 
 @Getter
+@Accessors(fluent = true)
 public class OsxAudioDevice extends AudioDevice {
     private final int deviceId;
     private final boolean isDefault;

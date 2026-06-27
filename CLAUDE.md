@@ -43,11 +43,15 @@ install before running Maven, e.g. `export JAVA_HOME=~/.jdks/graalvm-ce-25.0.2`
 ```
 
 - `package` produces a native executable at `target/*-runner` (Linux) / `target/*-runner.exe` (Windows).
-- CI (`.github/workflows/build-and-release.yml`) builds the native image on Windows and Linux via
-  `mvn -B package -Pnative`, wraps it in installers (Windows Inno Setup `.exe`, Linux `.deb` /
-  AppImage / Flatpak — see `packaging/`), and publishes a per-branch pre-release. The native image is
-  NOT self-contained: it loads companion `*.dll`/`*.so` libraries from its own directory, so every
-  artifact must bundle them alongside the executable. The Linux artifacts also bundle **`kdotool`**
+- CI (`.github/workflows/build-and-release.yml`) builds the native image per OS via
+  `mvn -B package -Pnative`, smoke-tests the bare runner, stages it as the Tauri shell's bundled
+  `backend/` resource, then runs `tauri build` to produce the desktop-shell installers (Windows **NSIS**
+  `.exe`, Linux `.deb` + AppImage, macOS `.app`→`.dmg`) and publishes a per-branch pre-release. The
+  Flatpak (best-effort) bundles the prebuilt Tauri shell + backend on the **GNOME runtime** (it ships
+  WebKitGTK, which the webview needs). The native image is NOT self-contained: it loads companion
+  `*.dll`/`*.so` libraries from its own directory, so every artifact must bundle them alongside the
+  executable. (The pre-Tauri Inno Setup / hand-written AppImage+deb scripts under `packaging/` are kept
+  for reference but are no longer invoked by CI.) The Linux artifacts also bundle **`kdotool`**
   (Apache-2.0) next to the executable — it resolves the focused window on KDE Plasma (Wayland and X11)
   for focus volume. `packaging/linux/fetch-kdotool.sh` pins the version + sha256 and is cache-keyed in
   CI on its own hash (download once per pin). `LinuxProcessHelper` prefers a `kdotool` sibling of its
@@ -76,6 +80,41 @@ Standalone: `cd src/main/webui && npm install && npm start` (serves :4200, proxi
 (runs in the `compile` phase) writes `src/main/webui/src/app/models/generated/backend.types.ts` from
 `com.getpcpanel.rest.model.**`, the command classes, and any `**.dto.**`. When you change a DTO or
 command shape, recompile so the frontend contract regenerates — don't edit the generated file.
+
+### Desktop shell (`src-tauri/`, Tauri 2 / Rust)
+
+The shipped desktop app is a thin **Tauri** window (`src-tauri/src/main.rs`) wrapped around the
+backend — it does **not** embed the UI, and it is the **only** UI surface (there is no browser-tab
+mode). The backend stays the self-contained Quarkus native binary serving the Angular UI + REST +
+WebSocket on `127.0.0.1:7654`; the shell spawns it as a **child process** (bundled under
+`src-tauri/backend/`, named `PCPanel`/`PCPanel.exe`), health-gates a webview onto
+`http://127.0.0.1:7654`, and owns the window, the cross-platform **tray** (Open PCPanel / Go to
+Settings / Quit), single-instance, and the child's lifecycle. Closing the window **hides to tray** (the
+backend keeps running). **Quit** (from the tray or the settings page) makes the backend exit (`POST
+/api/system/quit` → `Quarkus.asyncExit`); the shell's supervisor detects the spawned child's death and
+exits too, so Quit tears down *everything*, then the UI briefly shows a static "PCPanel has been quit"
+splash. The frontend needs no per-surface changes — it derives its API/WS origin from
+`window.location.host`.
+
+The shell launches the backend with env `PCPANEL_DISABLE_TRAY=1` (shell owns the tray) and arg
+`skipfilecheck` (shell owns single-instance). `StartupOnboarding` no longer opens any browser — it only
+computes the onboarding `intent` the UI polls (`GET /api/system/onboarding`), so the welcome/update
+dialog still shows inside the shell window.
+
+Dev: run `./mvnw quarkus:dev` (backend on :7654), then `cd src-tauri && cargo tauri dev` — the shell
+detects no bundled backend and does **not** spawn one. In dev (a debug build) the window loads the UI
+from the **Angular/Vite dev server on :4200** (`UI_URL`/`devUrl`), not the backend's Quinoa-forwarded
+:7654; :4200 proxies `/api` + `/ws` to :7654 (`proxy.conf.json`). This matters because Vite's
+hot-reload client has the dev-server port baked in — served from :7654 it opens its HMR websocket
+*cross-origin* to :4200, which spams the console with red `WebSocket connection failed` errors; loading
+the page from :4200 makes that socket same-origin and clears them (and gives working live-reload). A
+packaged **release** build loads the UI straight from the backend on :7654. The shell always talks to
+the backend API (health / quit / `quitting`) on :7654 regardless. Because there is no spawned child to
+watch in dev, the supervisor detects a Quit via the backend's `quitting` flag (or it going unreachable
+after being up) and then exits the shell.
+Build a packaged app: `./mvnw package -Pnative`, then `packaging/assemble-backend.sh` (copies the
+runner + companion libs into `src-tauri/backend/`), then `cd src-tauri && cargo tauri build`. Needs the
+Rust toolchain + `cargo-tauri`; regenerate icons from `app-icon.png` with `cargo tauri icon` if changed.
 
 ## Architecture
 
