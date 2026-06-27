@@ -44,7 +44,7 @@ interface PickerGroup { label: string; status?: Status; statusText?: string; off
             <button class="row" [class.offline]="g.offline || g.unsupported || macBlocked(def)"
                     [disabled]="g.unsupported"
                     [attr.aria-disabled]="macBlocked(def) || null"
-                    [title]="macBlocked(def) ? MAC_UNSUPPORTED_REASON : null"
+                    [title]="macBlockedReason(def)"
                     (click)="choose(def)">
               <span>{{ def.label }}</span>
               @if (macBlocked(def)) { <pc-icon class="row-info" name="alert-triangle" [size]="13"></pc-icon> }
@@ -135,9 +135,14 @@ export class CommandPickerComponent {
     return groups;
   });
 
-  /** A per-app / focused-app audio command on macOS, where CoreAudio can't do per-process volume. */
+  /** A command that is non-functional on macOS (per-process audio, Windows-only features, etc.). */
   macBlocked(def: CommandDef): boolean {
     return !!def.macUnsupported && this.platform.os() === 'mac';
+  }
+
+  macBlockedReason(def: CommandDef): string | null {
+    if (!this.macBlocked(def)) return null;
+    return typeof def.macUnsupported === 'string' ? def.macUnsupported : MAC_UNSUPPORTED_REASON;
   }
 
   choose(def: CommandDef): void {

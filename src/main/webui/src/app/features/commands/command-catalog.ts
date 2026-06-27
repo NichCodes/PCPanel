@@ -40,8 +40,9 @@ export interface CommandDef {
   icon: IconName;
   buildEmpty: () => Record<string, any>;
   fields: FieldDef[];
-  /** Non-functional on macOS — disabled there with an explanatory tooltip (see MAC_UNSUPPORTED_REASON). */
-  macUnsupported?: boolean;
+  /** Non-functional on macOS — disabled there with an explanatory tooltip. When `true`, uses
+   *  {@link MAC_UNSUPPORTED_REASON}; when a string, that string is the tooltip. */
+  macUnsupported?: boolean | string;
 }
 
 /** Why per-app / focused-app audio actions are disabled on macOS (CoreAudio has no per-process volume). */
@@ -114,6 +115,7 @@ export const COMMANDS: CommandDef[] = [
   },
   {
     type: P + 'CommandVolumeDefaultDeviceAdvanced', label: 'Advanced default device', category: 'audio', kinds: ['button'], icon: 'monitor',
+    macUnsupported: 'Switching media and communication defaults separately is only supported on Windows.',
     buildEmpty: () => ({ _type: P + 'CommandVolumeDefaultDeviceAdvanced', communicationPb: '', communicationRec: '', mediaPb: '', mediaRec: '', name: '', overlayText: '' }),
     fields: [
       { kind: 'device', key: 'mediaPb', label: 'Media — playback', filter: 'output' },
